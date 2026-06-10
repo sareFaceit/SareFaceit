@@ -1,3 +1,17 @@
+import subprocess, sys
+
+def _install_deps():
+    pkgs = [
+        'pyTelegramBotAPI==4.22.1',
+        'psycopg2-binary==2.9.10',
+        'Flask==3.0.3',
+        'Pillow==10.4.0',
+        'requests==2.32.3',
+    ]
+    subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--quiet'] + pkgs)
+
+_install_deps()
+
 import os
 import re
 import telebot
