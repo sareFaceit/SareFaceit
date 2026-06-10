@@ -8,7 +8,10 @@ def _install_deps():
         'Pillow==10.4.0',
         'requests==2.32.3',
     ]
-    subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--quiet'] + pkgs)
+    subprocess.check_call([
+        sys.executable, '-m', 'pip', 'install', '--quiet',
+        '--break-system-packages'
+    ] + pkgs)
 
 _install_deps()
 
