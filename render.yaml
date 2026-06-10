@@ -5,8 +5,8 @@ services:
     region: frankfurt
     plan: free
     pythonVersion: "3.11.9"
-    buildCommand: pip install --break-system-packages -r requirements.txt
-    startCommand: python3 bot.py
+    buildCommand: python3 -m venv /opt/render/project/venv && /opt/render/project/venv/bin/pip install -r requirements.txt
+    startCommand: /opt/render/project/venv/bin/python bot.py
     healthCheckPath: /
     envVars:
       - key: BOT_TOKEN
