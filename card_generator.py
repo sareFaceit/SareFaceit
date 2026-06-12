@@ -111,6 +111,21 @@ def format_league(league: str) -> str:
 
 
 # ==================== GLOW EFFECT ====================
+def _paste_avatar_circle(base_img: Image.Image, avatar_img: Image.Image, x: int, y: int, size: int) -> Image.Image:
+    """Вставляет аватарку в виде круга на базовое изображение."""
+    try:
+        avatar = avatar_img.resize((size, size), Image.LANCZOS).convert("RGBA")
+        mask = Image.new("L", (size, size), 0)
+        md = ImageDraw.Draw(mask)
+        md.ellipse([(0, 0), (size - 1, size - 1)], fill=255)
+        base = base_img.convert("RGBA")
+        layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        layer.paste(avatar, (x, y), mask)
+        return Image.alpha_composite(base, layer).convert("RGB")
+    except Exception:
+        return base_img
+
+
 def _apply_glow(img: Image.Image, xy, r: int, color, strength: int = 18, layers: int = 8) -> Image.Image:
     x1, y1, x2, y2 = xy
     glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
@@ -165,6 +180,7 @@ def generate_profile_card(
     mvp_count:   int  = 0,
     is_verified: bool = False,
     duo_stats:   dict = None,
+    avatar_img   = None,
 ) -> io.BytesIO:
 
     QUALS_H = 70 if quals_stats else 0
@@ -218,8 +234,13 @@ def generate_profile_card(
     img = _apply_glow(img, (AX, AY, AX+AS, AY+AS), r=8, color=_GOLD, strength=10, layers=6)
     draw = ImageDraw.Draw(img)
     _rr(draw, (AX, AY, AX+AS, AY+AS), 8, fill=(22, 16, 44), outline=_GOLD, width=2)
-    initials = (username[:2]).upper() if username else "??"
-    _text_c(draw, AX + AS//2, AY + AS//2 - 22, initials, _font(38, bold=True), _GOLD)
+    if avatar_img is not None:
+        img = _paste_avatar_circle(img, avatar_img, AX, AY, AS)
+        draw = ImageDraw.Draw(img)
+        draw.rounded_rectangle((AX, AY, AX+AS, AY+AS), radius=8, outline=_GOLD, width=2)
+    else:
+        initials = (username[:2]).upper() if username else "??"
+        _text_c(draw, AX + AS//2, AY + AS//2 - 22, initials, _font(38, bold=True), _GOLD)
 
     draw.text((152, 20), f"#{user_id}", font=_font(13), fill=_TEXT_GRAY)
     fname = _font(30, bold=True)
@@ -391,7 +412,7 @@ def generate_profile_card(
 
 
 # ==================== LEADERBOARD CARD ====================
-def generate_leaderboard_card(players: list, title: str = "TOP ИГРОКОВ ПО ELO") -> io.BytesIO:
+def generate_leaderboard_card(players: list, title: str = "TOP ИГРОКОВ ПО ELO", avatars: dict = None) -> io.BytesIO:
     n      = min(len(players), 10)
     ROW_H  = 74
     HEAD_H = 60
@@ -463,9 +484,16 @@ def generate_leaderboard_card(players: list, title: str = "TOP ИГРОКОВ П
         lv  = p.get("level", get_level(elo))
         av  = LVL_COLORS.get(lv, (130, 125, 105))
         ax, ay, ar = 54, y + ROW_H // 2 - 20, 19
-        draw.ellipse([(ax, ay), (ax + ar*2, ay + ar*2)], fill=av, outline=(190, 186, 172), width=2)
-        _text_c(draw, ax + ar, ay + ar - 10, (p.get("name", "??")[:2]).upper(),
-                _font(12, bold=True), _WH)
+        uid_val = p.get("uid")
+        av_img  = (avatars or {}).get(uid_val) if uid_val else None
+        if av_img is not None:
+            img = _paste_avatar_circle(img, av_img, ax, ay, ar * 2)
+            draw = ImageDraw.Draw(img)
+            draw.ellipse([(ax, ay), (ax + ar*2, ay + ar*2)], outline=(190, 186, 172), width=2)
+        else:
+            draw.ellipse([(ax, ay), (ax + ar*2, ay + ar*2)], fill=av, outline=(190, 186, 172), width=2)
+            _text_c(draw, ax + ar, ay + ar - 10, (p.get("name", "??")[:2]).upper(),
+                    _font(12, bold=True), _WH)
 
         name = p.get("name", "Unknown")
         nx   = 100
@@ -662,7 +690,7 @@ def generate_match_result_card(
 
 
 # ==================== DUO (2v2) LEADERBOARD CARD ====================
-def generate_duo_leaderboard_card(players: list, title: str = "TOP 2v2 ПО ELO") -> io.BytesIO:
+def generate_duo_leaderboard_card(players: list, title: str = "TOP 2v2 ПО ELO", avatars: dict = None) -> io.BytesIO:
     n      = min(len(players), 10)
     ROW_H  = 74
     HEAD_H = 60
@@ -713,9 +741,16 @@ def generate_duo_leaderboard_card(players: list, title: str = "TOP 2v2 ПО ELO"
         elo = p.get("elo", 1000)
         lv  = p.get("level", get_level(elo))
         ax, ay, ar = 54, y + ROW_H // 2 - 20, 19
-        draw.ellipse([(ax, ay), (ax + ar*2, ay + ar*2)], fill=_PUR, outline=(52, 34, 80), width=2)
-        _text_c(draw, ax + ar, ay + ar - 10, (p.get("name", "??")[:2]).upper(),
-                _font(12, bold=True), (236, 234, 252))
+        uid_val2 = p.get("uid")
+        av_img2  = (avatars or {}).get(uid_val2) if uid_val2 else None
+        if av_img2 is not None:
+            img = _paste_avatar_circle(img, av_img2, ax, ay, ar * 2)
+            draw = ImageDraw.Draw(img)
+            draw.ellipse([(ax, ay), (ax + ar*2, ay + ar*2)], outline=(52, 34, 80), width=2)
+        else:
+            draw.ellipse([(ax, ay), (ax + ar*2, ay + ar*2)], fill=_PUR, outline=(52, 34, 80), width=2)
+            _text_c(draw, ax + ar, ay + ar - 10, (p.get("name", "??")[:2]).upper(),
+                    _font(12, bold=True), (236, 234, 252))
 
         name = p.get("name", "Unknown")
         nx   = 100
