@@ -126,6 +126,43 @@ _raw_ids = os.environ.get("ADMIN_IDS", "")
 ADMIN_IDS_LIST: list = [int(x.strip()) for x in _raw_ids.split(",") if x.strip().isdigit()]
 ADMIN_ID = ADMIN_IDS_LIST[0] if ADMIN_IDS_LIST else 0
 
+# Создатели (выше любого администратора)
+CREATOR_IDS_RAW = os.environ.get("CREATOR_IDS", "")
+CREATOR_IDS_LIST: list = [int(x.strip()) for x in CREATOR_IDS_RAW.split(",") if x.strip().isdigit()]
+
+# Группа для логов зарегистрированных/отменённых матчей
+MATCHES_LOG_CHAT_ID_RAW = os.environ.get("MATCHES_LOG_CHAT_ID", "0")
+try:
+    MATCHES_LOG_CHAT_ID = int(MATCHES_LOG_CHAT_ID_RAW)
+except Exception:
+    MATCHES_LOG_CHAT_ID = 0
+
+MATCHES_LOG_THREAD_ID_RAW = os.environ.get("MATCHES_LOG_THREAD_ID", "0")
+try:
+    MATCHES_LOG_THREAD_ID = int(MATCHES_LOG_THREAD_ID_RAW) if MATCHES_LOG_THREAD_ID_RAW and MATCHES_LOG_THREAD_ID_RAW != "0" else None
+except Exception:
+    MATCHES_LOG_THREAD_ID = None
+
+# Второй чат и ветка для логов матчей (ветка в другой группе)
+MATCHES_LOG_CHAT2_ID_RAW = os.environ.get("MATCHES_LOG_CHAT2_ID", "0")
+try:
+    MATCHES_LOG_CHAT2_ID = int(MATCHES_LOG_CHAT2_ID_RAW)
+except Exception:
+    MATCHES_LOG_CHAT2_ID = 0
+
+MATCHES_LOG_THREAD2_ID_RAW = os.environ.get("MATCHES_LOG_THREAD2_ID", "0")
+try:
+    MATCHES_LOG_THREAD2_ID = int(MATCHES_LOG_THREAD2_ID_RAW) if MATCHES_LOG_THREAD2_ID_RAW and MATCHES_LOG_THREAD2_ID_RAW != "0" else None
+except Exception:
+    MATCHES_LOG_THREAD2_ID = None
+
+# Лог действий администраторов — отдельная ветка в LOG_CHAT_ID
+ADMIN_LOG_THREAD_ID_RAW = os.environ.get("ADMIN_LOG_THREAD_ID", "0")
+try:
+    ADMIN_LOG_THREAD_ID = int(ADMIN_LOG_THREAD_ID_RAW) if ADMIN_LOG_THREAD_ID_RAW and ADMIN_LOG_THREAD_ID_RAW != "0" else None
+except Exception:
+    ADMIN_LOG_THREAD_ID = None
+
 telebot.apihelper.ENABLE_MIDDLEWARE = True
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
@@ -618,6 +655,28 @@ def init_db():
             host_game_id TEXT DEFAULT '',
             screenshots_count INTEGER DEFAULT 0,
             started_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+        )
+    """)
+    conn.commit()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS admin_logs (
+            id SERIAL PRIMARY KEY,
+            admin_id BIGINT NOT NULL,
+            admin_name TEXT DEFAULT '',
+            action TEXT NOT NULL,
+            target_id BIGINT DEFAULT NULL,
+            target_name TEXT DEFAULT '',
+            details TEXT DEFAULT '',
+            created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT
+        )
+    """)
+    conn.commit()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS admin_permissions (
+            admin_id BIGINT PRIMARY KEY,
+            allowed_actions TEXT DEFAULT 'all'
         )
     """)
     conn.commit()
@@ -2034,6 +2093,183 @@ def send_punishment_log_priv(admin_uid, text):
     priv_display = get_user_private_display(admin_uid)
     send_punishment_log(f"🏠 <b>{priv_display}</b>\n\n{text}")
 
+
+# ==================== СОЗДАТЕЛЬ / ПРАВА АДМИНОВ / ЛОГИ ====================
+
+def is_creator(uid):
+    """Является ли пользователь создателем (выше любого администратора)."""
+    return uid in CREATOR_IDS_LIST
+
+def log_admin_action(admin_id, action, target_id=None, target_name='', details=''):
+    """Записывает действие администратора в БД и отправляет в лог-канал."""
+    admin_p = get_player(admin_id)
+    admin_name = admin_p[1] if admin_p else str(admin_id)
+    try:
+        conn2 = _db()
+        cur2 = conn2.cursor()
+        cur2.execute(
+            "INSERT INTO admin_logs (admin_id, admin_name, action, target_id, target_name, details) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (admin_id, admin_name, action, target_id, target_name or '', details or '')
+        )
+        conn2.commit()
+        conn2.close()
+    except Exception as e:
+        print(f"[log_admin_action] {e}")
+    if LOG_CHAT_ID and ADMIN_LOG_THREAD_ID:
+        try:
+            target_str = f"\n👤 Цель: {tg_link(target_id, target_name)}" if target_id else ""
+            details_str = f"\n📝 {details}" if details else ""
+            log_text = (
+                f"📋 <b>Действие администратора</b>\n"
+                f"👮 {tg_link(admin_id, admin_name)}\n"
+                f"⚙️ Действие: <b>{action}</b>"
+                f"{target_str}{details_str}"
+            )
+            bot.send_message(
+                LOG_CHAT_ID, log_text,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+                message_thread_id=ADMIN_LOG_THREAD_ID
+            )
+        except Exception as e:
+            print(f"[log_admin_action send] {e}")
+
+def get_admin_permissions(admin_id):
+    """Возвращает set разрешённых действий для админа, или None если все разрешены."""
+    if is_creator(admin_id):
+        return None
+    try:
+        conn2 = _db()
+        cur2 = conn2.cursor()
+        cur2.execute("SELECT allowed_actions FROM admin_permissions WHERE admin_id=%s", (admin_id,))
+        row = cur2.fetchone()
+        conn2.close()
+        if not row:
+            return None
+        val = row[0] or 'all'
+        if val == 'all':
+            return None
+        if val == 'none':
+            return set()
+        return set(x.strip() for x in val.split(',') if x.strip())
+    except Exception:
+        return None
+
+def admin_has_perm(admin_id, perm):
+    """Проверяет, есть ли у админа доступ к конкретной функции."""
+    if is_creator(admin_id):
+        return True
+    perms = get_admin_permissions(admin_id)
+    if perms is None:
+        return True
+    return perm in perms
+
+def set_admin_permissions(admin_id, actions_str):
+    """Устанавливает разрешения для конкретного администратора."""
+    try:
+        conn2 = _db()
+        cur2 = conn2.cursor()
+        cur2.execute(
+            "INSERT INTO admin_permissions (admin_id, allowed_actions) VALUES (%s, %s) "
+            "ON CONFLICT (admin_id) DO UPDATE SET allowed_actions=%s",
+            (admin_id, actions_str, actions_str)
+        )
+        conn2.commit()
+        conn2.close()
+    except Exception as e:
+        print(f"[set_admin_permissions] {e}")
+
+def reset_player_stats(target_id):
+    """Обнуляет всю статистику игрока (ELO, wins, losses, kills и т.д.)."""
+    try:
+        conn2 = _db()
+        cur2 = conn2.cursor()
+        cur2.execute("""
+            UPDATE players SET
+                elo=1000, wins=0, losses=0, kills=0, deaths=0, assists=0, mvp_count=0,
+                quals_elo=1000, quals_wins=0, quals_losses=0,
+                quals_kills=0, quals_deaths=0, quals_assists=0,
+                duo_elo=1000, duo_wins=0, duo_losses=0,
+                duo_kills=0, duo_deaths=0, duo_assists=0
+            WHERE user_id=%s
+        """, (target_id,))
+        conn2.commit()
+        conn2.close()
+        return True
+    except Exception as e:
+        print(f"[reset_player_stats] {e}")
+        return False
+
+def get_player_inventory_items(target_id):
+    """Возвращает список предметов инвентаря игрока."""
+    try:
+        conn2 = _db()
+        cur2 = conn2.cursor()
+        cur2.execute("""
+            SELECT i.id, s.name, s.item_type, s.category, i.is_activated, i.purchased_at
+            FROM inventory i JOIN shop_items s ON i.item_id=s.id
+            WHERE i.user_id=%s ORDER BY i.purchased_at DESC
+        """, (target_id,))
+        rows = cur2.fetchall()
+        conn2.close()
+        return rows
+    except Exception:
+        return []
+
+def remove_inventory_item_by_id(inv_id):
+    """Удаляет предмет из инвентаря по ID записи."""
+    try:
+        conn2 = _db()
+        cur2 = conn2.cursor()
+        cur2.execute("DELETE FROM inventory WHERE id=%s", (inv_id,))
+        conn2.commit()
+        conn2.close()
+        return True
+    except Exception:
+        return False
+
+def get_admin_logs_list(limit=30, offset=0):
+    """Получает последние действия администраторов."""
+    try:
+        conn2 = _db()
+        cur2 = conn2.cursor()
+        cur2.execute(
+            "SELECT admin_id, admin_name, action, target_id, target_name, details, created_at "
+            "FROM admin_logs ORDER BY created_at DESC LIMIT %s OFFSET %s",
+            (limit, offset)
+        )
+        rows = cur2.fetchall()
+        conn2.close()
+        return rows
+    except Exception:
+        return []
+
+def send_matches_log_msg(text, match_key=None, lobby=None):
+    """Отправляет лог матча (зарег./отменён) в отдельные группы с кнопками управления."""
+    kb = None
+    if match_key and lobby:
+        kb = types.InlineKeyboardMarkup(row_width=1)
+        kb.add(
+            types.InlineKeyboardButton("🔄 Перерегать",        callback_data=f"reregister_match|{match_key}"),
+            types.InlineKeyboardButton("📋 На регистрацию",    callback_data=f"restore_match_reg|{match_key}"),
+        )
+    targets = []
+    if MATCHES_LOG_CHAT_ID:
+        targets.append((MATCHES_LOG_CHAT_ID, MATCHES_LOG_THREAD_ID))
+    if MATCHES_LOG_CHAT2_ID:
+        targets.append((MATCHES_LOG_CHAT2_ID, MATCHES_LOG_THREAD2_ID))
+    for chat_id, thread_id in targets:
+        try:
+            kw = {"parse_mode": "HTML", "disable_web_page_preview": True}
+            if thread_id:
+                kw["message_thread_id"] = thread_id
+            if kb:
+                kw["reply_markup"] = kb
+            bot.send_message(chat_id, text, **kw)
+        except Exception as e:
+            print(f"[send_matches_log_msg] chat={chat_id}: {e}")
+
 def send_result_log(text):
     """Отправляет результат матча в паблик (ветка, заданная /setresulttopic)."""
     if not LOG_CHAT_ID:
@@ -2116,10 +2352,15 @@ def main_menu(uid):
     kb.add(types.InlineKeyboardButton(
         "👥 Моя пати" if in_party else "➕ Создать пати", callback_data="party_menu"
     ))
-    if is_admin(uid):
+    if is_creator(uid):
+        kb.add(
+            types.InlineKeyboardButton("👑 Креаторская панель", callback_data="creator_panel"),
+            types.InlineKeyboardButton("⚙️ Админ панель",       callback_data="admin_panel"),
+        )
+    elif is_admin(uid):
         kb.add(
             types.InlineKeyboardButton("🤖 Добавить ботов", callback_data="add_bots_admin"),
-            types.InlineKeyboardButton("⚙️ Админ панель", callback_data="admin_panel"),
+            types.InlineKeyboardButton("⚙️ Админ панель",    callback_data="admin_panel"),
         )
     elif is_game_reg_check(uid):
         kb.add(types.InlineKeyboardButton("📋 Регистрация матчей", callback_data="game_reg_panel"))
@@ -4607,8 +4848,6 @@ def _finalize_match(reg_uid, match_key):
                 try:
                     prem = has_active_premium(_uid)
                     if prem:
-                        if won:
-                            elo_change = int(elo_change * 1.5)
                         coins_reward = int(coins_reward * 1.5)
                 except Exception as _pe:
                     print(f"[premium check error] uid={_uid}: {_pe}")
@@ -4749,6 +4988,19 @@ def _finalize_match(reg_uid, match_key):
         f"🏷 {format_league(lobby.get('league',''))}/{lobby.get('device','').upper()}"
     )
 
+    # Лог зарегистрированного матча → в отдельные группы с кнопками управления
+    matches_log_text = (
+        f"✅ <b>Матч #{match_code} ЗАРЕГИСТРИРОВАН</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🗺 Карта: {lobby.get('map_name','?')} | Счёт: <b>{score_w}:{score_l}</b>\n"
+        f"🏆 Победитель: <b>{winner_team_label}</b>\n"
+        f"🏷 {format_league(lobby.get('league','default'))} / {lobby.get('device','').upper()}\n"
+        f"🏠 Привате: {priv_label}\n"
+        f"👤 Зарегал: {tg_link(reg_uid, get_player(reg_uid)[1] if get_player(reg_uid) else str(reg_uid))}"
+    )
+    send_matches_log_msg(matches_log_text, match_key=match_key, lobby=lobby)
+    log_admin_action(reg_uid, f"Регистрация матча #{match_code}", details=f"Победитель: {winner_team_label} {score_w}:{score_l}")
+
     # Отправляем "Матч Зарегистрирован" в ветку + закрываем тему
     if ADMIN_CHAT_ID and lobby.get("admin_thread_id"):
         thread_id = lobby["admin_thread_id"]
@@ -4860,6 +5112,18 @@ def handle_cancel_reason(msg):
         f"📝 Причина: <b>{reason}</b>\n"
         f"🏷 {lobby.get('league','').upper()}/{lobby.get('device','').upper()}"
     )
+
+    # Лог отменённого матча → в группы логов матчей с кнопками
+    cancel_log_text = (
+        f"❌ <b>Матч #{match_code} ОТМЕНЁН</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🗺 Карта: {lobby.get('map_name','?')}\n"
+        f"🏷 {format_league(lobby.get('league','default'))} / {lobby.get('device','').upper()}\n"
+        f"📝 Причина: <b>{reason}</b>\n"
+        f"👮 Отменил: {tg_link(uid, admin_name)}"
+    )
+    send_matches_log_msg(cancel_log_text, match_key=match_key, lobby=lobby)
+    log_admin_action(uid, f"Отмена матча #{match_code}", details=f"Причина: {reason}")
 
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("reregister_match|"))
@@ -5472,47 +5736,423 @@ def handle_editstat_flow(msg):
 @bot.callback_query_handler(func=lambda c: c.data == "admin_panel")
 def cb_admin_panel(c):
     uid = c.from_user.id
-    if not is_admin(uid):
+    if not is_admin(uid) and not is_creator(uid):
         bot.answer_callback_query(c.id, "❌ Нет доступа")
         return
     players = get_all_players()
     active_count = sum(1 for l in running_matches.values() if l.get("status") == "active")
+    perm_note = ""
+    if not is_creator(uid):
+        perms = get_admin_permissions(uid)
+        if perms is not None and perms != set():
+            perm_note = f"\n🔒 Ограничений: <b>{len(perms)} функций</b>"
+        elif perms == set():
+            perm_note = "\n🔒 Все функции <b>отключены</b>"
     text = (
         f"⚙️ <b>АДМИН ПАНЕЛЬ</b>\n\n"
         f"👥 Игроков: <b>{len(players)}</b>\n🎮 Лобби: <b>{len(active_lobbies)}</b>\n"
-        f"🔴 Матчей: <b>{active_count}</b>\n\nВыберите действие:"
+        f"🔴 Матчей: <b>{active_count}</b>{perm_note}\n\nВыберите действие:"
     )
     kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(
-        types.InlineKeyboardButton("👥 Список игроков",       callback_data="admin_players"),
-        types.InlineKeyboardButton("🔍 Поиск по нику/ID",    callback_data="admin_search"),
-        types.InlineKeyboardButton("🔍 Поиск по Game ID",    callback_data="admin_search_gameid"),
-        types.InlineKeyboardButton("💰 Выдать монеты",        callback_data="admin_give_coins"),
-        types.InlineKeyboardButton("📊 Изменить ELO",         callback_data="admin_set_elo"),
-        types.InlineKeyboardButton("✏️ Изм. ник игрока",     callback_data="admin_change_nick"),
-        types.InlineKeyboardButton("🎮 Изм. Game ID игрока", callback_data="admin_change_gid"),
-        types.InlineKeyboardButton("📈 Редактировать стату",  callback_data="admin_edit_stats"),
-        types.InlineKeyboardButton("⚠️ Выдать варн",          callback_data="admin_warn"),
-        types.InlineKeyboardButton("➖ Снять варн",           callback_data="admin_unwarn"),
-        types.InlineKeyboardButton("🔇 Мут",                  callback_data="admin_mute"),
-        types.InlineKeyboardButton("🔊 Размутить",            callback_data="admin_unmute"),
-        types.InlineKeyboardButton("🔎 Вызвать на проверку",  callback_data="admin_check"),
-        types.InlineKeyboardButton("✅ Снять проверку",       callback_data="admin_uncheck"),
-        types.InlineKeyboardButton("🚫 Бан / Разбан",         callback_data="admin_ban"),
-        types.InlineKeyboardButton("👑 Выдать/Снять админку", callback_data="admin_give_admin"),
-        types.InlineKeyboardButton("🎮 Роль Гейм Рег",       callback_data="admin_give_game_reg"),
-        types.InlineKeyboardButton("⭐ Quals доступ",         callback_data="admin_quals_access"),
-        types.InlineKeyboardButton("🎁 Промокоды",            callback_data="admin_promos"),
-        types.InlineKeyboardButton("🎮 Управление матчами",   callback_data="admin_matches"),
-        types.InlineKeyboardButton("📋 История матчей",       callback_data="admin_match_history"),
-        types.InlineKeyboardButton("📢 Рассылка",             callback_data="admin_broadcast"),
-        types.InlineKeyboardButton("🎟 Открытые тикеты",      callback_data="admin_tickets"),
-        types.InlineKeyboardButton("✅ Синяя галочка",        callback_data="admin_give_verified"),
-        types.InlineKeyboardButton("🏆 Управление сезонами",  callback_data="admin_seasons"),
-        types.InlineKeyboardButton("🔙 Назад",                callback_data="back"),
-    )
-    bot.edit_message_text(text, c.message.chat.id, c.message.message_id, reply_markup=kb)
+    def btn(label, cb, perm_key):
+        if admin_has_perm(uid, perm_key):
+            kb.add(types.InlineKeyboardButton(label, callback_data=cb))
+    if is_creator(uid):
+        kb.add(types.InlineKeyboardButton("👑 Креаторская панель", callback_data="creator_panel"))
+    btn("👥 Список игроков",       "admin_players",         "players")
+    btn("🔍 Поиск по нику/ID",    "admin_search",          "search")
+    btn("🔍 Поиск по Game ID",    "admin_search_gameid",   "search_gameid")
+    btn("💰 Выдать монеты",        "admin_give_coins",      "give_coins")
+    btn("📊 Изменить ELO",         "admin_set_elo",         "set_elo")
+    btn("✏️ Изм. ник игрока",     "admin_change_nick",     "change_nick")
+    btn("🎮 Изм. Game ID игрока", "admin_change_gid",      "change_gid")
+    btn("📈 Редактировать стату",  "admin_edit_stats",      "edit_stats")
+    btn("⚠️ Выдать варн",          "admin_warn",            "warn")
+    btn("➖ Снять варн",           "admin_unwarn",          "unwarn")
+    btn("🔇 Мут",                  "admin_mute",            "mute")
+    btn("🔊 Размутить",            "admin_unmute",          "unmute")
+    btn("🔎 Вызвать на проверку",  "admin_check",           "check")
+    btn("✅ Снять проверку",       "admin_uncheck",         "uncheck")
+    btn("🚫 Бан / Разбан",         "admin_ban",             "ban")
+    btn("👑 Выдать/Снять админку", "admin_give_admin",      "give_admin")
+    btn("🎮 Роль Гейм Рег",       "admin_give_game_reg",   "give_game_reg")
+    btn("⭐ Quals доступ",         "admin_quals_access",    "quals_access")
+    btn("🎁 Промокоды",            "admin_promos",          "promos")
+    btn("🎮 Управление матчами",   "admin_matches",         "matches")
+    btn("📋 История матчей",       "admin_match_history",   "match_history")
+    btn("📢 Рассылка",             "admin_broadcast",       "broadcast")
+    btn("🎟 Открытые тикеты",      "admin_tickets",         "tickets")
+    btn("✅ Синяя галочка",        "admin_give_verified",   "give_verified")
+    btn("🏆 Управление сезонами",  "admin_seasons",         "seasons")
+    kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back"))
+    bot.edit_message_text(text, c.message.chat.id, c.message.message_id, reply_markup=kb, parse_mode="HTML")
     bot.answer_callback_query(c.id)
+
+
+# ==================== КРЕАТОРСКАЯ ПАНЕЛЬ ====================
+
+creator_flow = {}   # uid -> {step, ...}
+
+ALL_ADMIN_PERMS = [
+    ("players",      "👥 Список игроков"),
+    ("search",       "🔍 Поиск по нику/ID"),
+    ("search_gameid","🔍 Поиск по Game ID"),
+    ("give_coins",   "💰 Выдать монеты"),
+    ("set_elo",      "📊 Изменить ELO"),
+    ("change_nick",  "✏️ Изм. ник"),
+    ("change_gid",   "🎮 Изм. Game ID"),
+    ("edit_stats",   "📈 Ред. стату"),
+    ("warn",         "⚠️ Варн"),
+    ("unwarn",       "➖ Снять варн"),
+    ("mute",         "🔇 Мут"),
+    ("unmute",       "🔊 Размут"),
+    ("check",        "🔎 Проверка"),
+    ("uncheck",      "✅ Снять проверку"),
+    ("ban",          "🚫 Бан"),
+    ("give_admin",   "👑 Выдать адм"),
+    ("give_game_reg","🎮 Гейм Рег"),
+    ("quals_access", "⭐ Quals"),
+    ("promos",       "🎁 Промокоды"),
+    ("matches",      "🎮 Матчи"),
+    ("match_history","📋 История матчей"),
+    ("broadcast",    "📢 Рассылка"),
+    ("tickets",      "🎟 Тикеты"),
+    ("give_verified","✅ Галочка"),
+    ("seasons",      "🏆 Сезоны"),
+]
+
+@bot.callback_query_handler(func=lambda c: c.data == "creator_panel")
+def cb_creator_panel(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        types.InlineKeyboardButton("📋 Логи действий администраторов", callback_data="creator_view_logs"),
+        types.InlineKeyboardButton("🔒 Управление правами администраторов", callback_data="creator_manage_perms"),
+        types.InlineKeyboardButton("🎒 Изъять предмет у игрока",       callback_data="creator_take_item"),
+        types.InlineKeyboardButton("💰 Изъять монеты у игрока",         callback_data="creator_take_coins"),
+        types.InlineKeyboardButton("🔄 Обнулить стату игрока",          callback_data="creator_reset_stats"),
+        types.InlineKeyboardButton("⚙️ Админ панель",                   callback_data="admin_panel"),
+        types.InlineKeyboardButton("🔙 Назад",                          callback_data="back"),
+    )
+    bot.edit_message_text(
+        "👑 <b>КРЕАТОРСКАЯ ПАНЕЛЬ</b>\n\nВыберите действие:",
+        c.message.chat.id, c.message.message_id,
+        reply_markup=kb, parse_mode="HTML",
+    )
+    bot.answer_callback_query(c.id)
+
+
+@bot.callback_query_handler(func=lambda c: c.data == "creator_view_logs")
+def cb_creator_view_logs(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа"); return
+    bot.answer_callback_query(c.id)
+    rows = get_admin_logs_list(limit=20)
+    if not rows:
+        bot.send_message(uid, "📋 <b>Логи пусты</b>", parse_mode="HTML"); return
+    text = "📋 <b>Последние действия администраторов</b>\n\n"
+    for admin_id, admin_name, action, target_id, target_name, details, created_at in rows:
+        dt = fmt_dt(created_at)
+        target_str = f" → {target_name}" if target_name else ""
+        det_str = f"\n   📝 {details}" if details else ""
+        text += f"[{dt}] <b>{admin_name}</b>\n   ⚙️ {action}{target_str}{det_str}\n\n"
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="creator_panel"))
+    bot.send_message(uid, text[:4000], parse_mode="HTML", reply_markup=kb)
+
+
+@bot.callback_query_handler(func=lambda c: c.data == "creator_manage_perms")
+def cb_creator_manage_perms(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа"); return
+    bot.answer_callback_query(c.id)
+    creator_flow[uid] = {"step": "perms_choose_admin"}
+    bot.send_message(
+        uid,
+        "🔒 <b>Управление правами администраторов</b>\n\n"
+        "Введите Telegram ID администратора:",
+        parse_mode="HTML",
+    )
+
+
+@bot.callback_query_handler(func=lambda c: c.data == "creator_take_item")
+def cb_creator_take_item(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа"); return
+    bot.answer_callback_query(c.id)
+    creator_flow[uid] = {"step": "take_item_player"}
+    bot.send_message(uid, "🎒 <b>Изъятие предмета</b>\n\nВведите Telegram ID игрока:", parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda c: c.data == "creator_take_coins")
+def cb_creator_take_coins(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа"); return
+    bot.answer_callback_query(c.id)
+    creator_flow[uid] = {"step": "take_coins_player"}
+    bot.send_message(uid, "💰 <b>Изъятие монет</b>\n\nФормат: <code>USER_ID КОЛИЧЕСТВО</code>", parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda c: c.data == "creator_reset_stats")
+def cb_creator_reset_stats(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа"); return
+    bot.answer_callback_query(c.id)
+    creator_flow[uid] = {"step": "reset_stats_player"}
+    bot.send_message(
+        uid,
+        "🔄 <b>Обнуление статистики</b>\n\n"
+        "Введите Telegram ID игрока (вся стата будет сброшена до нуля, ELO → 1000):",
+        parse_mode="HTML",
+    )
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("creator_item_take|"))
+def cb_creator_item_take(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа"); return
+    parts = c.data.split("|")
+    inv_id = int(parts[1])
+    target_id = int(parts[2])
+    item_name = parts[3] if len(parts) > 3 else "?"
+    if remove_inventory_item_by_id(inv_id):
+        bot.answer_callback_query(c.id, f"✅ Предмет «{item_name}» изъят", show_alert=True)
+        p = get_player(target_id)
+        target_name = p[1] if p else str(target_id)
+        log_admin_action(uid, "Изъятие предмета", target_id, target_name, f"Предмет: {item_name}")
+        try:
+            bot.send_message(target_id, f"🎒 Администратор изъял ваш предмет: <b>{item_name}</b>", parse_mode="HTML")
+        except Exception:
+            pass
+        try:
+            bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
+        except Exception:
+            pass
+    else:
+        bot.answer_callback_query(c.id, "❌ Ошибка изъятия", show_alert=True)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("creator_perms_toggle|"))
+def cb_creator_perms_toggle(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа"); return
+    parts = c.data.split("|")
+    target_admin_id = int(parts[1])
+    perm_key = parts[2]
+    current = get_admin_permissions(target_admin_id)
+    if current is None:
+        current = set(k for k, _ in ALL_ADMIN_PERMS)
+    if perm_key == "__all__":
+        set_admin_permissions(target_admin_id, "all")
+        bot.answer_callback_query(c.id, "✅ Все права восстановлены")
+    elif perm_key == "__none__":
+        set_admin_permissions(target_admin_id, "none")
+        bot.answer_callback_query(c.id, "🚫 Все права отключены")
+    else:
+        if perm_key in current:
+            current.discard(perm_key)
+            bot.answer_callback_query(c.id, f"❌ Отключено: {perm_key}")
+        else:
+            current.add(perm_key)
+            bot.answer_callback_query(c.id, f"✅ Включено: {perm_key}")
+        set_admin_permissions(target_admin_id, ",".join(current))
+    _show_creator_perms_kb(c.message.chat.id, c.message.message_id, target_admin_id)
+
+
+def _show_creator_perms_kb(chat_id, msg_id, target_admin_id):
+    p = get_player(target_admin_id)
+    name = p[1] if p else str(target_admin_id)
+    current = get_admin_permissions(target_admin_id)
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    for key, label in ALL_ADMIN_PERMS:
+        has = current is None or key in current
+        icon = "✅" if has else "❌"
+        kb.add(types.InlineKeyboardButton(
+            f"{icon} {label}",
+            callback_data=f"creator_perms_toggle|{target_admin_id}|{key}"
+        ))
+    kb.add(
+        types.InlineKeyboardButton("✅ Все права",   callback_data=f"creator_perms_toggle|{target_admin_id}|__all__"),
+        types.InlineKeyboardButton("❌ Нет прав",    callback_data=f"creator_perms_toggle|{target_admin_id}|__none__"),
+    )
+    kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="creator_panel"))
+    try:
+        bot.edit_message_text(
+            f"🔒 <b>Права администратора {name}</b> (<code>{target_admin_id}</code>)\n\n"
+            "Нажмите кнопку чтобы включить/выключить функцию:",
+            chat_id, msg_id, reply_markup=kb, parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
+
+@bot.message_handler(func=lambda m: m.from_user.id in creator_flow and m.text is not None)
+def handle_creator_flow(msg):
+    uid = msg.from_user.id
+    if not is_creator(uid):
+        creator_flow.pop(uid, None); return
+    data = creator_flow.get(uid, {})
+    step = data.get("step")
+    text = msg.text.strip()
+
+    if step == "perms_choose_admin":
+        if not text.isdigit():
+            bot.send_message(uid, "❌ Введите числовой Telegram ID"); return
+        target_admin_id = int(text)
+        p = get_player(target_admin_id)
+        if not p or not p[11]:
+            bot.send_message(uid, "❌ Администратор не найден (или не является администратором)"); return
+        creator_flow.pop(uid, None)
+        sent = bot.send_message(uid, "⏳ Загрузка прав...", parse_mode="HTML")
+        _show_creator_perms_kb(uid, sent.message_id, target_admin_id)
+
+    elif step == "take_item_player":
+        if not text.isdigit():
+            bot.send_message(uid, "❌ Введите числовой Telegram ID"); return
+        target_id = int(text)
+        p = get_player(target_id)
+        if not p:
+            bot.send_message(uid, "❌ Игрок не найден"); return
+        creator_flow.pop(uid, None)
+        items = get_player_inventory_items(target_id)
+        if not items:
+            bot.send_message(uid, f"🎒 У игрока <b>{p[1]}</b> нет предметов в инвентаре.", parse_mode="HTML"); return
+        kb = types.InlineKeyboardMarkup(row_width=1)
+        for inv_id, name, itype, cat, activated, purchased_at in items:
+            act_str = " [активен]" if activated else ""
+            kb.add(types.InlineKeyboardButton(
+                f"❌ {name}{act_str}",
+                callback_data=f"creator_item_take|{inv_id}|{target_id}|{name[:20]}"
+            ))
+        kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="creator_panel"))
+        bot.send_message(
+            uid,
+            f"🎒 <b>Инвентарь игрока {p[1]}</b>\n\nНажмите на предмет чтобы изъять:",
+            parse_mode="HTML", reply_markup=kb,
+        )
+
+    elif step == "take_coins_player":
+        parts = text.split()
+        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].lstrip("-").isdigit():
+            bot.send_message(uid, "❌ Формат: USER_ID КОЛИЧЕСТВО"); return
+        target_id, amount = int(parts[0]), int(parts[1])
+        if amount <= 0:
+            bot.send_message(uid, "❌ Количество должно быть > 0"); return
+        p = get_player(target_id)
+        if not p:
+            bot.send_message(uid, "❌ Игрок не найден"); return
+        current_coins = p[5] if len(p) > 5 else 0
+        deduct = min(amount, current_coins)
+        conn2 = _db(); cur2 = conn2.cursor()
+        cur2.execute("UPDATE players SET coins=GREATEST(0, coins-%s) WHERE user_id=%s", (amount, target_id))
+        conn2.commit(); conn2.close()
+        creator_flow.pop(uid, None)
+        bot.send_message(uid, f"✅ Изъято <b>{deduct} SC</b> у игрока <b>{p[1]}</b>", parse_mode="HTML")
+        log_admin_action(uid, "Изъятие монет", target_id, p[1], f"-{deduct} SC")
+        try:
+            bot.send_message(target_id, f"💰 Администратор изъял у вас <b>{deduct} SC</b>.", parse_mode="HTML")
+        except Exception:
+            pass
+
+    elif step == "reset_stats_player":
+        if not text.isdigit():
+            bot.send_message(uid, "❌ Введите числовой Telegram ID"); return
+        target_id = int(text)
+        p = get_player(target_id)
+        if not p:
+            bot.send_message(uid, "❌ Игрок не найден"); return
+        creator_flow.pop(uid, None)
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            types.InlineKeyboardButton("✅ Да, обнулить", callback_data=f"creator_reset_confirm|{target_id}"),
+            types.InlineKeyboardButton("❌ Отмена",        callback_data="creator_panel"),
+        )
+        bot.send_message(
+            uid,
+            f"⚠️ <b>Обнулить ВСЮ стату игрока {p[1]}?</b>\n\n"
+            "ELO → 1000, W/L/K/D/A → 0 (Default, Quals, 2v2)\n\nЭто действие необратимо!",
+            parse_mode="HTML", reply_markup=kb,
+        )
+    else:
+        creator_flow.pop(uid, None)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("creator_reset_confirm|"))
+def cb_creator_reset_confirm(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа"); return
+    target_id = int(c.data.split("|")[1])
+    p = get_player(target_id)
+    if not p:
+        bot.answer_callback_query(c.id, "❌ Игрок не найден"); return
+    ok = reset_player_stats(target_id)
+    if ok:
+        log_admin_action(uid, "Обнуление статистики", target_id, p[1], "Все режимы сброшены до 0 / ELO 1000")
+        bot.answer_callback_query(c.id, f"✅ Стата {p[1]} обнулена", show_alert=True)
+        try:
+            bot.send_message(target_id, "🔄 Ваша статистика была обнулена администратором.", parse_mode="HTML")
+        except Exception:
+            pass
+        try:
+            bot.edit_message_text(
+                f"✅ <b>Стата игрока {p[1]} обнулена.</b>\n\nELO = 1000, W/L/K/D/A = 0",
+                c.message.chat.id, c.message.message_id, parse_mode="HTML",
+            )
+        except Exception:
+            pass
+    else:
+        bot.answer_callback_query(c.id, "❌ Ошибка БД", show_alert=True)
+
+
+# Восстановление матча на регистрацию из лога матчей
+@bot.callback_query_handler(func=lambda c: c.data.startswith("restore_match_reg|"))
+def cb_restore_match_reg(c):
+    uid = c.from_user.id
+    if not is_game_reg_check(uid) and not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа"); return
+    match_key = c.data.split("|", 1)[1]
+    lobby = running_matches.get(match_key)
+    if not lobby:
+        bot.answer_callback_query(c.id, "❌ Матч не найден в памяти (уже завершён или удалён)", show_alert=True)
+        return
+    lobby["reg_taken_by"] = None
+    lobby["status"] = "active"
+    match_code = lobby.get("match_code", str(lobby.get("match_id", "?")))
+    bot.answer_callback_query(c.id, f"📋 Матч #{match_code} снова на регистрации", show_alert=True)
+    # Переоткрываем тему в admin-чате если была закрыта
+    thread_id = lobby.get("admin_thread_id")
+    if thread_id and ADMIN_CHAT_ID:
+        try:
+            bot.reopen_forum_topic(ADMIN_CHAT_ID, thread_id)
+        except Exception:
+            pass
+        try:
+            sc = lobby.get("screenshots_count", 0)
+            new_kb = _build_admin_match_kb(match_key, match_code, sc, taken_by=None)
+            bot.send_message(
+                ADMIN_CHAT_ID,
+                f"📋 Матч #{match_code} поставлен на регистрацию (из лога матчей).",
+                message_thread_id=thread_id,
+                reply_markup=new_kb,
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+    try:
+        bot.edit_message_reply_markup(c.message.chat.id, c.message.message_id, reply_markup=None)
+    except Exception:
+        pass
 
 
 # ==================== ПРОМОКОДЫ (АДМИН) ====================
@@ -5909,10 +6549,13 @@ def cb_admin_match_history(c):
 ])
 def cb_admin_action(c):
     uid = c.from_user.id
-    if not is_admin(uid):
+    if not is_admin(uid) and not is_creator(uid):
         bot.answer_callback_query(c.id, "❌ Нет доступа")
         return
     action = c.data.split("admin_")[1]
+    if not admin_has_perm(uid, action):
+        bot.answer_callback_query(c.id, "🔒 У вас нет прав на это действие", show_alert=True)
+        return
     prompts = {
         "search":         "🔍 Введите Telegram ID или никнейм:",
         "search_gameid":  "🔍 Введите Game ID игрока:",
@@ -5943,8 +6586,11 @@ def cb_admin_action(c):
 @bot.callback_query_handler(func=lambda c: c.data == "admin_ban")
 def cb_admin_ban_start(c):
     uid = c.from_user.id
-    if not is_admin(uid):
+    if not is_admin(uid) and not is_creator(uid):
         bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    if not admin_has_perm(uid, "ban"):
+        bot.answer_callback_query(c.id, "🔒 У вас нет прав на это действие", show_alert=True)
         return
     ban_flow[uid] = {"step": "target"}
     bot.answer_callback_query(c.id)
@@ -5954,7 +6600,7 @@ def cb_admin_ban_start(c):
 @bot.message_handler(func=lambda m: m.from_user.id in admin_action and m.text is not None)
 def handle_admin_action(msg):
     uid = msg.from_user.id
-    if not is_admin(uid):
+    if not is_admin(uid) and not is_creator(uid):
         return
     action = admin_action.pop(uid)
     text = msg.text.strip()
@@ -6034,8 +6680,10 @@ def handle_admin_action(msg):
             bot.send_message(uid, "❌ Формат: USER_ID КОЛИЧЕСТВО")
             return
         target_id, amount = int(parts[0]), int(parts[1])
+        tp = get_player(target_id)
         add_coins_to_player(target_id, amount)
         bot.send_message(uid, f"✅ Выдано {amount} SC игроку <code>{target_id}</code>", parse_mode="HTML")
+        log_admin_action(uid, "Выдача монет", target_id, tp[1] if tp else str(target_id), f"{amount} SC")
         try:
             bot.send_message(target_id, f"💰 Вам начислено <b>{amount} SC</b> администратором!", parse_mode="HTML")
         except Exception:
@@ -6047,6 +6695,7 @@ def handle_admin_action(msg):
             bot.send_message(uid, "❌ Формат: USER_ID НОВОЕ_ELO")
             return
         target_id, new_elo = int(parts[0]), int(parts[1])
+        tp = get_player(target_id)
         conn = _db(); cur = conn.cursor()
         cur.execute("UPDATE players SET elo=%s WHERE user_id=%s AND registered=1", (new_elo, target_id))
         affected = cur.rowcount
@@ -6055,6 +6704,7 @@ def handle_admin_action(msg):
             bot.send_message(uid, f"❌ Игрок <code>{target_id}</code> не найден в базе (не зарегистрирован).", parse_mode="HTML")
         else:
             bot.send_message(uid, f"✅ ELO игрока <code>{target_id}</code> изменено на <b>{new_elo}</b>", parse_mode="HTML")
+            log_admin_action(uid, "Изменение ELO", target_id, tp[1] if tp else str(target_id), f"ELO → {new_elo}")
 
     elif action == "change_nick":
         p = find_player_by_input(text)
@@ -6524,7 +7174,7 @@ def handle_mute_flow(msg):
 @bot.callback_query_handler(func=lambda c: c.data.startswith("admin_do_"))
 def cb_admin_do_action(c):
     uid = c.from_user.id
-    if not is_admin(uid):
+    if not is_admin(uid) and not is_creator(uid):
         bot.answer_callback_query(c.id, "❌ Нет доступа")
         return
     parts = c.data.split("_")
@@ -6559,6 +7209,7 @@ def cb_admin_do_action(c):
                 f"👮 Выдал: {tg_link(uid, admin_name)}\n"
                 f"👤 Разбанен: {tg_link(target_id, p[1])}"
             )
+            log_admin_action(uid, "Разбан", target_id, p[1])
         else:
             bot.answer_callback_query(c.id, f"🚫 Начат бан {p[1]}", show_alert=True)
             bot.send_message(
@@ -6592,6 +7243,7 @@ def cb_admin_do_action(c):
             f"👤 Игрок: {tg_link(target_id, p[1])}\n"
             f"📊 Осталось: {new_warns}/3"
         )
+        log_admin_action(uid, "Снятие варна", target_id, p[1], f"Осталось: {new_warns}/3")
         return
     elif action == "mute":
         conn.close()
@@ -6619,6 +7271,7 @@ def cb_admin_do_action(c):
             f"👮 Снял: {tg_link(uid, admin_name)}\n"
             f"👤 Игрок: {tg_link(target_id, p[1])}"
         )
+        log_admin_action(uid, "Размут", target_id, p[1])
         return
     elif action == "check":
         cur.execute("UPDATE players SET is_on_check=1, check_admin_id=%s WHERE user_id=%s", (uid, target_id))
@@ -6635,6 +7288,7 @@ def cb_admin_do_action(c):
             f"👮 Вызвал: {tg_link(uid, admin_name)}\n"
             f"👤 Игрок: {tg_link(target_id, p[1])}"
         )
+        log_admin_action(uid, "Вызов на проверку", target_id, p[1])
         return
     elif action == "uncheck":
         cur.execute("UPDATE players SET is_on_check=0, check_admin_id=0 WHERE user_id=%s", (target_id,))
@@ -6651,21 +7305,25 @@ def cb_admin_do_action(c):
             f"👮 Снял: {tg_link(uid, admin_name)}\n"
             f"👤 Игрок: {tg_link(target_id, p[1])}"
         )
+        log_admin_action(uid, "Снятие проверки", target_id, p[1])
         return
     elif action == "give_admin":
         new_val = 0 if p[11] else 1
         cur.execute("UPDATE players SET is_admin=%s WHERE user_id=%s", (new_val, target_id))
         msg_text = f"{'👑 Админка выдана' if new_val else '❌ Админка снята'}: {p[1]}"
+        log_admin_action(uid, "👑 Админка выдана" if new_val else "❌ Админка снята", target_id, p[1])
     elif action == "quals":
         cur_val = p[16] if len(p) > 16 else 0
         new_val = 0 if cur_val else 1
         cur.execute("UPDATE players SET quals_access=%s WHERE user_id=%s", (new_val, target_id))
         msg_text = f"{'⭐ Quals выдан' if new_val else '❌ Quals снят'}: {p[1]}"
+        log_admin_action(uid, "⭐ Quals выдан" if new_val else "❌ Quals снят", target_id, p[1])
     elif action == "toggle_verified":
         cur_val = is_verified_check(target_id)
         new_val = 0 if cur_val else 1
         cur.execute("UPDATE players SET is_verified=%s WHERE user_id=%s", (new_val, target_id))
         msg_text = f"{'✅ Галочка выдана' if new_val else '❎ Галочка снята'}: {p[1]}"
+        log_admin_action(uid, "✅ Галочка выдана" if new_val else "❎ Галочка снята", target_id, p[1])
         try:
             if new_val:
                 bot.send_message(target_id, "✅ Вам выдана <b>синяя галочка</b> верификации!", parse_mode="HTML")
