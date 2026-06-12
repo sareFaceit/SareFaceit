@@ -116,7 +116,7 @@ _dynamic_results_thread_id = RESULTS_THREAD_ID
 DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_URL", "")
 
 ACCEPT_TIMEOUT = 60
-MAPS = ["Zone 9", "Rust", "Province", "Sakura", "Sandstone"]
+MAPS = ["Zone 9", "Rust", "Province", "Sandstone"]
 
 def _get_lobby_maps(lobby: dict) -> list:
     """Возвращает пул карт для лобби."""
@@ -978,30 +978,6 @@ def update_tg_username(uid, tg_username):
         pass
     conn.commit()
     conn.close()
-
-def get_tg_avatar(uid):
-    """Скачивает фото профиля Telegram и возвращает PIL Image или None."""
-    try:
-        from PIL import Image
-        import io as _io
-        photos = bot.get_user_profile_photos(uid, limit=1)
-        if not photos or not photos.photos:
-            return None
-        file_id = photos.photos[0][-1].file_id
-        file_info = bot.get_file(file_id)
-        data = bot.download_file(file_info.file_path)
-        return Image.open(_io.BytesIO(data)).convert("RGBA")
-    except Exception:
-        return None
-
-def get_tg_avatars_bulk(uids):
-    """Скачивает аватарки для списка uid. Возвращает dict {uid: PIL Image}."""
-    result = {}
-    for uid2 in uids:
-        av = get_tg_avatar(uid2)
-        if av:
-            result[uid2] = av
-    return result
 
 def nick_taken(nick, uid=None, exclude_uid=None):
     table = get_user_table(uid) if uid else "players"
@@ -2602,7 +2578,6 @@ def cb_profile(c):
                 mvp_count   = mvp_count,
                 is_verified = is_verified_check(uid),
                 duo_stats   = duo_stats,
-                avatar_img  = get_tg_avatar(uid),
             )
 
             # delete old message, send photo with buttons
@@ -2709,7 +2684,6 @@ def cb_profile_quals(c):
                 quals_stats = None,
                 mvp_count   = q_mvp_count,
                 is_verified = is_verified_check(uid),
-                avatar_img  = get_tg_avatar(uid),
             )
             try:
                 bot.delete_message(c.message.chat.id, c.message.message_id)
@@ -2806,7 +2780,6 @@ def cb_profile_duo(c):
                 mvp_count   = mvp_count,
                 is_verified = is_verified_check(uid),
                 duo_stats   = None,
-                avatar_img  = get_tg_avatar(uid),
             )
             try:
                 bot.delete_message(c.message.chat.id, c.message.message_id)
@@ -2894,8 +2867,7 @@ def cb_top_default(c):
                     "is_premium": has_active_premium(uid2), "is_admin": is_admin(uid2),
                     "is_verified": is_verified_check(uid2),
                 })
-            avatars_lb = get_tg_avatars_bulk([p["uid"] for p in lb_players])
-            img_buf = generate_leaderboard_card(lb_players, title=f"📊 {priv_display} DEFAULT — TOP ELO", avatars=avatars_lb)
+            img_buf = generate_leaderboard_card(lb_players, title=f"📊 {priv_display} DEFAULT — TOP ELO")
             try:
                 bot.delete_message(c.message.chat.id, c.message.message_id)
             except Exception:
@@ -2962,8 +2934,7 @@ def cb_top_quals(c):
                     "is_premium": has_active_premium(uid2), "is_admin": is_admin(uid2),
                     "is_verified": is_verified_check(uid2),
                 })
-            avatars_qlb = get_tg_avatars_bulk([p["uid"] for p in lb_players])
-            img_buf = generate_leaderboard_card(lb_players, title=f"⭐ {priv_display} QUALS — TOP ELO", avatars=avatars_qlb)
+            img_buf = generate_leaderboard_card(lb_players, title=f"⭐ {priv_display} QUALS — TOP ELO")
             try:
                 bot.delete_message(c.message.chat.id, c.message.message_id)
             except Exception:
@@ -3041,11 +3012,9 @@ def cb_top_2v2(c):
                     "is_premium": has_active_premium(uid2),
                     "is_admin":   is_admin(uid2),
                 })
-            avatars_2v2 = get_tg_avatars_bulk([p["uid"] for p in lb_players])
             img_buf = generate_duo_leaderboard_card(
                 lb_players,
                 title=f"👥 {priv_display} 2v2 — TOP ELO",
-                avatars=avatars_2v2,
             )
             try:
                 bot.delete_message(c.message.chat.id, c.message.message_id)
@@ -3904,7 +3873,7 @@ def launch_match(lobby_id):
         for grp in party_groups:
             if ct_cap in grp:
                 for m in grp:
-                    if m != ct_cap and m not in team_ct and m not in team_t:
+                    if m != ct_cap and m not in team_ct:
                         team_ct.append(m)
                 break
     if t_cap and t_cap in players:
@@ -3912,7 +3881,7 @@ def launch_match(lobby_id):
         for grp in party_groups:
             if t_cap in grp:
                 for m in grp:
-                    if m != t_cap and m not in team_t and m not in team_ct:
+                    if m != t_cap and m not in team_t:
                         team_t.append(m)
                 break
 
