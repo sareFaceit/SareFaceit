@@ -3900,11 +3900,13 @@ def launch_match(lobby_id):
         elif len(team_t) + len(remaining_grp) <= _team_sz:
             team_t.extend(remaining_grp)
         else:
-            for m in remaining_grp:
-                if len(team_ct) < _team_sz:
-                    team_ct.append(m)
-                else:
-                    team_t.append(m)
+            # Не разбиваем пати — кидаем всю группу в команду с большим запасом мест
+            ct_free = _team_sz - len(team_ct)
+            t_free  = _team_sz - len(team_t)
+            if ct_free >= t_free:
+                team_ct.extend(remaining_grp)
+            else:
+                team_t.extend(remaining_grp)
         for m in remaining_grp:
             already_placed.add(m)
 
@@ -3924,11 +3926,27 @@ def launch_match(lobby_id):
             team_ct.append(u)
         else:
             team_t.append(u)
-    # Перебалансируем если нужно
-    while len(team_ct) > _team_sz and len(team_t) < _team_sz:
-        team_t.insert(0, team_ct.pop())
-    while len(team_t) > _team_sz and len(team_ct) < _team_sz:
-        team_ct.insert(0, team_t.pop())
+
+    # Перебалансируем если нужно, не разбивая пати
+    def _party_safe_move(src, dst, max_sz):
+        """Перекидывает игроков из src в dst пока src > max_sz, не разбивая пати."""
+        while len(src) > max_sz and len(dst) < max_sz:
+            moved = False
+            for candidate in reversed(src):
+                p_obj = get_party_of(candidate)
+                if p_obj and len(p_obj["members"]) > 1:
+                    party_in_src = [m for m in p_obj["members"] if m in src]
+                    if len(party_in_src) > 1:
+                        continue  # Нельзя — разобьёт пати
+                src.remove(candidate)
+                dst.insert(0, candidate)
+                moved = True
+                break
+            if not moved:
+                break  # Невозможно перебалансировать без разбивки пати
+
+    _party_safe_move(team_ct, team_t, _team_sz)
+    _party_safe_move(team_t, team_ct, _team_sz)
 
     lobby["team_ct"] = team_ct
     lobby["team_t"]  = team_t
