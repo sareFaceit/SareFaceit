@@ -3749,8 +3749,29 @@ def _start_map_ban_phase_inner(lobby_id):
     delete_accept_status(lobby_id)
     delete_lobby_messages(lobby_id)
 
-    ct_team = players[:team_sz] if len(players) >= team_sz else players
-    t_team  = players[team_sz:] if len(players) > team_sz else players[-1:]
+    # Группируем игроков так, чтобы участники одной пати стояли рядом —
+    # это гарантирует что пати не окажется разбита по разным половинам при сплите.
+    def _group_by_party(player_list):
+        placed = set()
+        grouped = []
+        player_set = set(player_list)
+        for uid in player_list:
+            if uid in placed:
+                continue
+            party_obj = get_party_of(uid)
+            if party_obj and len(party_obj["members"]) > 1:
+                grp = [m for m in party_obj["members"] if m in player_set and m not in placed]
+                grouped.extend(grp)
+                for m in grp:
+                    placed.add(m)
+            else:
+                grouped.append(uid)
+                placed.add(uid)
+        return grouped
+
+    players_grouped = _group_by_party(players)
+    ct_team = players_grouped[:team_sz] if len(players_grouped) >= team_sz else players_grouped
+    t_team  = players_grouped[team_sz:] if len(players_grouped) > team_sz else players_grouped[-1:]
     lobby["ct_captain"] = pick_captain(ct_team)
     lobby["t_captain"]  = pick_captain(t_team)
 
@@ -3983,12 +4004,12 @@ def launch_match(lobby_id):
                     if m != ct_cap and m not in team_ct:
                         team_ct.append(m)
                 break
-    if t_cap and t_cap in players:
+    if t_cap and t_cap in players and t_cap not in team_ct:
         team_t.append(t_cap)
         for grp in party_groups:
             if t_cap in grp:
                 for m in grp:
-                    if m != t_cap and m not in team_t:
+                    if m != t_cap and m not in team_t and m not in team_ct:
                         team_t.append(m)
                 break
 
