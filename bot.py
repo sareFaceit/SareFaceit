@@ -2192,6 +2192,9 @@ def main_menu(uid):
     kb.add(types.InlineKeyboardButton(
         "👥 Моя пати" if in_party else "➕ Создать пати", callback_data="party_menu"
     ))
+    kb.add(types.InlineKeyboardButton(
+        "📜 Правила", url="https://telegra.ph/Pravila-Sare-Faceit-06-13"
+    ))
     if is_admin(uid):
         kb.add(
             types.InlineKeyboardButton("🤖 Добавить ботов", callback_data="add_bots_admin"),
@@ -2744,26 +2747,28 @@ def cb_profile_quals(c):
             ]
             quals_recent = get_player_quals_recent_matches(uid, limit=5, matches_table=_matches_table_quals)
             q_mvp_count  = p[31] if len(p) > 31 else 0
+            avatar_bytes = get_user_avatar(uid)
             img_buf = generate_profile_card(
-                username    = p[1] or "Unknown",
-                game_id     = p[2] or "",
-                user_id     = p[0],
-                elo         = q_elo,
-                wins        = q_wins,
-                losses      = q_losses,
-                kills       = q_kills,
-                deaths      = q_deaths,
-                assists     = q_assists,
-                is_premium  = premium,
-                is_admin    = is_admin(uid),
-                global_rank = q_rank,
-                league      = "QUALS",
-                map_stats   = [],
-                recent      = quals_recent,
-                leaderboard = lb_data,
-                quals_stats = None,
-                mvp_count   = q_mvp_count,
-                is_verified = is_verified_check(uid),
+                username     = p[1] or "Unknown",
+                game_id      = p[2] or "",
+                user_id      = p[0],
+                elo          = q_elo,
+                wins         = q_wins,
+                losses       = q_losses,
+                kills        = q_kills,
+                deaths       = q_deaths,
+                assists      = q_assists,
+                is_premium   = premium,
+                is_admin     = is_admin(uid),
+                global_rank  = q_rank,
+                league       = "QUALS",
+                map_stats    = [],
+                recent       = quals_recent,
+                leaderboard  = lb_data,
+                quals_stats  = None,
+                mvp_count    = q_mvp_count,
+                is_verified  = is_verified_check(uid),
+                avatar_bytes = avatar_bytes,
             )
             try:
                 bot.delete_message(c.message.chat.id, c.message.message_id)
@@ -2838,28 +2843,30 @@ def cb_profile_duo(c):
             _matches_table_duo = get_user_matches_table(uid)
             duo_recent  = get_player_duo_recent_matches(uid, limit=5, matches_table=_matches_table_duo)
             mvp_count   = p[31] if len(p) > 31 else 0
+            avatar_bytes = get_user_avatar(uid)
 
             img_buf = generate_profile_card(
-                username    = p[1] or "Unknown",
-                game_id     = p[2] or "",
-                user_id     = p[0],
-                elo         = d_elo,
-                wins        = d_wins,
-                losses      = d_losses,
-                kills       = d_kills,
-                deaths      = d_deaths,
-                assists     = d_assists,
-                is_premium  = premium,
-                is_admin    = is_admin(uid),
-                global_rank = d_rank,
-                league      = "2V2",
-                map_stats   = get_player_duo_map_stats(uid, _matches_table_duo),
-                recent      = duo_recent,
-                leaderboard = lb_data,
-                quals_stats = None,
-                mvp_count   = mvp_count,
-                is_verified = is_verified_check(uid),
-                duo_stats   = None,
+                username     = p[1] or "Unknown",
+                game_id      = p[2] or "",
+                user_id      = p[0],
+                elo          = d_elo,
+                wins         = d_wins,
+                losses       = d_losses,
+                kills        = d_kills,
+                deaths       = d_deaths,
+                assists      = d_assists,
+                is_premium   = premium,
+                is_admin     = is_admin(uid),
+                global_rank  = d_rank,
+                league       = "2V2",
+                map_stats    = get_player_duo_map_stats(uid, _matches_table_duo),
+                recent       = duo_recent,
+                leaderboard  = lb_data,
+                quals_stats  = None,
+                mvp_count    = mvp_count,
+                is_verified  = is_verified_check(uid),
+                duo_stats    = None,
+                avatar_bytes = avatar_bytes,
             )
             try:
                 bot.delete_message(c.message.chat.id, c.message.message_id)
@@ -7720,12 +7727,31 @@ def _reset_all_stats(table="players"):
 
 
 def _creator_panel_kb():
-    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
+        types.InlineKeyboardButton("📊 Статистика бота",          callback_data="creator_botstats"),
         types.InlineKeyboardButton("📋 Логи админов",             callback_data="creator_logs"),
+    )
+    kb.add(
+        types.InlineKeyboardButton("📢 Рассылка",                 callback_data="creator_broadcast"),
+        types.InlineKeyboardButton("🎁 Выдать Premium",           callback_data="creator_give_premium"),
+    )
+    kb.add(
+        types.InlineKeyboardButton("✅ Верификация игрока",       callback_data="creator_verify_player"),
+        types.InlineKeyboardButton("🛡️ Управление админами",     callback_data="creator_manage_admins"),
+    )
+    kb.add(
+        types.InlineKeyboardButton("🏆 Новый сезон",              callback_data="creator_new_season"),
+        types.InlineKeyboardButton("💰 Монеты игроку",            callback_data="creator_give_coins"),
+    )
+    kb.add(
         types.InlineKeyboardButton("🧹 Обнулить стату всех",      callback_data="creator_reset_all"),
         types.InlineKeyboardButton("👤 Обнулить стату игрока",    callback_data="creator_reset_player"),
+    )
+    kb.add(
         types.InlineKeyboardButton("🔒 Ограничения для админов",  callback_data="creator_restrict_menu"),
+    )
+    kb.add(
         types.InlineKeyboardButton("🔙 Назад",                    callback_data="back"),
     )
     return kb
@@ -7739,11 +7765,12 @@ def cb_creator_panel(c):
         return
     text = (
         "🔴 <b>КРЕАТОРСКАЯ ПАНЕЛЬ</b>\n\n"
-        "Доступные действия:\n"
-        "📋 Просмотр логов действий администраторов\n"
-        "🧹 Обнуление статистики всех игроков\n"
-        "👤 Обнуление статистики одного игрока\n"
-        "🔒 Ограничение доступа администраторов к функциям"
+        "📊 Статистика бота · 📋 Логи админов\n"
+        "📢 Рассылка игрокам · 🎁 Выдать Premium\n"
+        "✅ Верификация · 🛡️ Управление админами\n"
+        "🏆 Новый сезон · 💰 Монеты игроку\n"
+        "🧹 Обнулить стату всех · 👤 Обнулить игрока\n"
+        "🔒 Ограничения для администраторов"
     )
     try:
         bot.edit_message_text(text, c.message.chat.id, c.message.message_id,
@@ -8002,6 +8029,18 @@ def handle_creator_flow(msg):
     flow = creator_flow.get(uid, {})
     step = flow.get("step")
 
+    # Делегируем расширенные шаги
+    _extended_steps = {
+        "broadcast", "broadcast_confirm",
+        "give_premium_id", "give_premium_days",
+        "verify_player",
+        "promote_admin",
+        "give_coins_id", "give_coins_amount",
+    }
+    if step in _extended_steps:
+        _handle_creator_flow_extended(msg, uid, flow, step)
+        return
+
     if step == "reset_player":
         creator_flow.pop(uid, None)
         inp = msg.text.strip()
@@ -8035,6 +8074,639 @@ def handle_creator_flow(msg):
             "ELO → 1000, все матч-стата → 0. Это необратимо!",
             reply_markup=kb, parse_mode="HTML",
         )
+
+
+# ==================== CREATOR: СТАТИСТИКА БОТА ====================
+@bot.callback_query_handler(func=lambda c: c.data == "creator_botstats")
+def cb_creator_botstats(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    try:
+        conn = _db()
+        cur  = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM players WHERE is_bot=0")
+        total_players = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM players WHERE is_bot=0 AND registered=1")
+        reg_players = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM players WHERE premium_until > %s AND is_bot=0", (int(time.time()),))
+        premium_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM players WHERE is_banned=1 AND is_bot=0")
+        banned_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM players WHERE is_admin=1 AND is_bot=0")
+        admin_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM players WHERE is_verified=1 AND is_bot=0")
+        verified_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM players WHERE quals_access=1 AND is_bot=0")
+        quals_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM matches")
+        total_matches = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM promo_codes WHERE is_active=1")
+        promos = cur.fetchone()[0]
+        cur.execute("SELECT SUM(coins) FROM players WHERE is_bot=0")
+        total_coins = cur.fetchone()[0] or 0
+        cur.execute("SELECT season_number FROM seasons WHERE is_active=1 ORDER BY id DESC LIMIT 1")
+        row_s = cur.fetchone()
+        season_num = row_s[0] if row_s else 1
+        conn.close()
+        text = (
+            "📊 <b>СТАТИСТИКА БОТА</b>\n\n"
+            f"👥 Всего игроков: <b>{total_players}</b> (рег: {reg_players})\n"
+            f"👑 Premium: <b>{premium_count}</b>\n"
+            f"🛡️ Администраторов: <b>{admin_count}</b>\n"
+            f"✅ Верифицированных: <b>{verified_count}</b>\n"
+            f"⭐ Quals доступ: <b>{quals_count}</b>\n"
+            f"🚫 Забанено: <b>{banned_count}</b>\n"
+            f"⚔️ Матчей сыграно: <b>{total_matches}</b>\n"
+            f"🎫 Активных промокодов: <b>{promos}</b>\n"
+            f"💰 Монет в обороте: <b>{total_coins:,}</b>\n"
+            f"🏆 Текущий сезон: <b>#{season_num}</b>"
+        )
+    except Exception as e:
+        text = f"❌ Ошибка получения статистики: {e}"
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="creator_panel"))
+    try:
+        bot.edit_message_text(text, c.message.chat.id, c.message.message_id,
+                              reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        bot.send_message(c.message.chat.id, text, reply_markup=kb, parse_mode="HTML")
+    bot.answer_callback_query(c.id)
+
+
+# ==================== CREATOR: РАССЫЛКА ====================
+@bot.callback_query_handler(func=lambda c: c.data == "creator_broadcast")
+def cb_creator_broadcast(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    creator_flow[uid] = {"step": "broadcast"}
+    bot.answer_callback_query(c.id)
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("❌ Отмена", callback_data="creator_panel"))
+    bot.send_message(
+        uid,
+        "📢 <b>Рассылка всем игрокам</b>\n\n"
+        "Введите текст сообщения. Поддерживается HTML-разметка.\n"
+        "Сообщение будет отправлено всем зарегистрированным игрокам.",
+        reply_markup=kb, parse_mode="HTML",
+    )
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("creator_broadcast_confirm_"))
+def cb_creator_broadcast_confirm(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    text_key = c.data.replace("creator_broadcast_confirm_", "")
+    flow = creator_flow.get(uid, {})
+    broadcast_text = flow.get("broadcast_text", "")
+    if not broadcast_text:
+        bot.answer_callback_query(c.id, "❌ Текст не найден")
+        return
+    creator_flow.pop(uid, None)
+    bot.answer_callback_query(c.id)
+    try:
+        conn = _db()
+        cur  = conn.cursor()
+        cur.execute("SELECT user_id FROM players WHERE is_bot=0 AND registered=1")
+        player_ids = [row[0] for row in cur.fetchall()]
+        conn.close()
+    except Exception as e:
+        bot.send_message(uid, f"❌ Ошибка БД: {e}")
+        return
+    sent = 0
+    failed = 0
+    for pid in player_ids:
+        try:
+            bot.send_message(pid, f"📢 <b>Сообщение от администрации:</b>\n\n{broadcast_text}",
+                             parse_mode="HTML")
+            sent += 1
+        except Exception:
+            failed += 1
+        time.sleep(0.05)
+    log_admin_action(uid, "broadcast", details=f"Отправлено: {sent}, ошибок: {failed}")
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("🔙 В панель", callback_data="creator_panel"))
+    bot.send_message(uid,
+        f"✅ <b>Рассылка завершена</b>\n\nОтправлено: <b>{sent}</b>\nОшибок: <b>{failed}</b>",
+        reply_markup=kb, parse_mode="HTML")
+
+
+# ==================== CREATOR: ВЫДАТЬ PREMIUM ====================
+@bot.callback_query_handler(func=lambda c: c.data == "creator_give_premium")
+def cb_creator_give_premium(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    creator_flow[uid] = {"step": "give_premium_id"}
+    bot.answer_callback_query(c.id)
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("❌ Отмена", callback_data="creator_panel"))
+    bot.send_message(uid, "🎁 Введите Telegram ID или ник игрока для выдачи Premium:",
+                     reply_markup=kb)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("creator_premium_exec_"))
+def cb_creator_premium_exec(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    parts = c.data.replace("creator_premium_exec_", "").split("_")
+    if len(parts) < 2:
+        bot.answer_callback_query(c.id, "❌ Ошибка")
+        return
+    try:
+        t_uid = int(parts[0])
+        days  = int(parts[1])
+    except ValueError:
+        bot.answer_callback_query(c.id, "❌ Ошибка")
+        return
+    target_p = get_player(t_uid)
+    t_name = target_p[1] if target_p else str(t_uid)
+    try:
+        conn = _db()
+        cur  = conn.cursor()
+        cur.execute("SELECT premium_until FROM players WHERE user_id=%s", (t_uid,))
+        row = cur.fetchone()
+        now = int(time.time())
+        current_until = row[0] if (row and row[0] and row[0] > now) else now
+        new_until = current_until + days * 86400
+        cur.execute("UPDATE players SET premium_until=%s WHERE user_id=%s", (new_until, t_uid))
+        conn.commit()
+        conn.close()
+        log_admin_action(uid, "give_premium", target_id=t_uid,
+                         details=f"{t_name} +{days}д")
+        bot.answer_callback_query(c.id, f"✅ Premium выдан {t_name} на {days} дней!", show_alert=True)
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("🔙 В панель", callback_data="creator_panel"))
+        bot.edit_message_text(
+            f"✅ <b>Premium выдан игроку {t_name}</b> на <b>{days} дней</b>.",
+            c.message.chat.id, c.message.message_id, reply_markup=kb, parse_mode="HTML")
+        try:
+            bot.send_message(t_uid,
+                f"🎉 Вам выдан <b>Premium статус</b> на <b>{days} дней</b>!\n"
+                "Наслаждайтесь привилегиями 👑", parse_mode="HTML")
+        except Exception:
+            pass
+    except Exception as e:
+        bot.answer_callback_query(c.id, f"❌ Ошибка: {e}", show_alert=True)
+
+
+# ==================== CREATOR: ВЕРИФИКАЦИЯ ====================
+@bot.callback_query_handler(func=lambda c: c.data == "creator_verify_player")
+def cb_creator_verify_player(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    creator_flow[uid] = {"step": "verify_player"}
+    bot.answer_callback_query(c.id)
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("❌ Отмена", callback_data="creator_panel"))
+    bot.send_message(uid,
+        "✅ <b>Верификация игрока</b>\n\nВведите Telegram ID или ник игрока:",
+        reply_markup=kb, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("creator_verify_exec_"))
+def cb_creator_verify_exec(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    parts = c.data.replace("creator_verify_exec_", "").split("_")
+    if len(parts) < 2:
+        bot.answer_callback_query(c.id, "❌ Ошибка")
+        return
+    try:
+        t_uid  = int(parts[0])
+        action = parts[1]
+    except ValueError:
+        bot.answer_callback_query(c.id, "❌ Ошибка")
+        return
+    target_p = get_player(t_uid)
+    t_name = target_p[1] if target_p else str(t_uid)
+    new_val = 1 if action == "add" else 0
+    try:
+        conn = _db()
+        cur  = conn.cursor()
+        cur.execute("UPDATE players SET is_verified=%s WHERE user_id=%s", (new_val, t_uid))
+        conn.commit()
+        conn.close()
+        label = "выдана ✅" if new_val else "снята ❌"
+        log_admin_action(uid, "toggle_verify", target_id=t_uid, details=f"{t_name} -> {label}")
+        bot.answer_callback_query(c.id, f"Верификация {label} для {t_name}", show_alert=True)
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("🔙 В панель", callback_data="creator_panel"))
+        bot.edit_message_text(
+            f"✅ Верификация <b>{label}</b> игроку <b>{t_name}</b>.",
+            c.message.chat.id, c.message.message_id, reply_markup=kb, parse_mode="HTML")
+        if new_val:
+            try:
+                bot.send_message(t_uid,
+                    "✅ Вам выдана <b>синяя галочка верификации</b>!\n"
+                    "Теперь она отображается рядом с вашим ником.", parse_mode="HTML")
+            except Exception:
+                pass
+    except Exception as e:
+        bot.answer_callback_query(c.id, f"❌ Ошибка: {e}", show_alert=True)
+
+
+# ==================== CREATOR: УПРАВЛЕНИЕ АДМИНАМИ ====================
+@bot.callback_query_handler(func=lambda c: c.data == "creator_manage_admins")
+def cb_creator_manage_admins(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    admins = _get_admin_list()
+    non_creator_admins = [(a_uid, a_name) for a_uid, a_name in admins if a_uid != CREATOR_ID]
+    text = "🛡️ <b>Управление администраторами</b>\n\n"
+    if non_creator_admins:
+        text += "Текущие администраторы:\n"
+        for a_uid, a_name in non_creator_admins:
+            text += f"  • {a_name or a_uid} (<code>{a_uid}</code>)\n"
+    else:
+        text += "Администраторов нет.\n"
+    text += "\nДействия:"
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for a_uid, a_name in non_creator_admins:
+        kb.add(types.InlineKeyboardButton(
+            f"❌ Снять {a_name or a_uid}",
+            callback_data=f"creator_demote_{a_uid}",
+        ))
+    kb.add(types.InlineKeyboardButton("➕ Назначить нового админа", callback_data="creator_promote"))
+    kb.add(types.InlineKeyboardButton("🔙 Назад", callback_data="creator_panel"))
+    try:
+        bot.edit_message_text(text, c.message.chat.id, c.message.message_id,
+                              reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        bot.send_message(c.message.chat.id, text, reply_markup=kb, parse_mode="HTML")
+    bot.answer_callback_query(c.id)
+
+
+@bot.callback_query_handler(func=lambda c: c.data == "creator_promote")
+def cb_creator_promote(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    creator_flow[uid] = {"step": "promote_admin"}
+    bot.answer_callback_query(c.id)
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("❌ Отмена", callback_data="creator_manage_admins"))
+    bot.send_message(uid, "🛡️ Введите Telegram ID игрока для назначения администратором:",
+                     reply_markup=kb)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("creator_demote_"))
+def cb_creator_demote(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    try:
+        t_uid = int(c.data.replace("creator_demote_", ""))
+    except ValueError:
+        bot.answer_callback_query(c.id, "❌ Ошибка")
+        return
+    target_p = get_player(t_uid)
+    t_name = target_p[1] if target_p else str(t_uid)
+    try:
+        conn = _db()
+        cur  = conn.cursor()
+        cur.execute("UPDATE players SET is_admin=0 WHERE user_id=%s", (t_uid,))
+        conn.commit()
+        conn.close()
+        if t_uid in ADMIN_IDS_LIST:
+            ADMIN_IDS_LIST.remove(t_uid)
+        log_admin_action(uid, "demote_admin", target_id=t_uid, details=t_name)
+        bot.answer_callback_query(c.id, f"✅ {t_name} снят с должности администратора", show_alert=True)
+    except Exception as e:
+        bot.answer_callback_query(c.id, f"❌ Ошибка: {e}", show_alert=True)
+        return
+    cb_creator_manage_admins(c)
+
+
+# ==================== CREATOR: МОНЕТЫ ИГРОКУ ====================
+@bot.callback_query_handler(func=lambda c: c.data == "creator_give_coins")
+def cb_creator_give_coins(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    creator_flow[uid] = {"step": "give_coins_id"}
+    bot.answer_callback_query(c.id)
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("❌ Отмена", callback_data="creator_panel"))
+    bot.send_message(uid,
+        "💰 <b>Изменение монет игрока</b>\n\nВведите Telegram ID или ник игрока:",
+        reply_markup=kb, parse_mode="HTML")
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("creator_coins_exec_"))
+def cb_creator_coins_exec(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    parts = c.data.replace("creator_coins_exec_", "").split("_")
+    if len(parts) < 2:
+        bot.answer_callback_query(c.id, "❌ Ошибка")
+        return
+    try:
+        t_uid  = int(parts[0])
+        amount = int(parts[1])
+    except ValueError:
+        bot.answer_callback_query(c.id, "❌ Ошибка")
+        return
+    target_p = get_player(t_uid)
+    t_name = target_p[1] if target_p else str(t_uid)
+    try:
+        conn = _db()
+        cur  = conn.cursor()
+        cur.execute("UPDATE players SET coins = GREATEST(0, coins + %s) WHERE user_id=%s", (amount, t_uid))
+        cur.execute("SELECT coins FROM players WHERE user_id=%s", (t_uid,))
+        new_bal = cur.fetchone()[0]
+        conn.commit()
+        conn.close()
+        sign = "+" if amount >= 0 else ""
+        log_admin_action(uid, "give_coins", target_id=t_uid,
+                         details=f"{t_name} {sign}{amount} SC")
+        bot.answer_callback_query(c.id,
+            f"✅ {t_name}: {sign}{amount} SC. Баланс: {new_bal} SC", show_alert=True)
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("🔙 В панель", callback_data="creator_panel"))
+        bot.edit_message_text(
+            f"✅ Игроку <b>{t_name}</b>: <b>{sign}{amount} SC</b>\nНовый баланс: <b>{new_bal} SC</b>",
+            c.message.chat.id, c.message.message_id, reply_markup=kb, parse_mode="HTML")
+        try:
+            action_word = "начислено" if amount >= 0 else "списано"
+            bot.send_message(t_uid,
+                f"💰 Вам {action_word} <b>{abs(amount)} SC</b> администратором.\n"
+                f"Ваш баланс: <b>{new_bal} SC</b>", parse_mode="HTML")
+        except Exception:
+            pass
+    except Exception as e:
+        bot.answer_callback_query(c.id, f"❌ Ошибка: {e}", show_alert=True)
+
+
+# ==================== CREATOR: НОВЫЙ СЕЗОН ====================
+@bot.callback_query_handler(func=lambda c: c.data == "creator_new_season")
+def cb_creator_new_season(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    try:
+        conn = _db()
+        cur  = conn.cursor()
+        cur.execute("SELECT season_number FROM seasons WHERE is_active=1 ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        conn.close()
+        current_season = row[0] if row else 1
+    except Exception:
+        current_season = 1
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        types.InlineKeyboardButton(
+            f"✅ Да, начать сезон #{current_season + 1}",
+            callback_data=f"creator_new_season_exec_{current_season + 1}",
+        ),
+        types.InlineKeyboardButton("❌ Отмена", callback_data="creator_panel"),
+    )
+    bot.edit_message_text(
+        f"🏆 <b>Новый сезон</b>\n\n"
+        f"Текущий сезон: <b>#{current_season}</b>\n\n"
+        "⚠️ При запуске нового сезона:\n"
+        "• Текущая статистика всех игроков будет сохранена в архив\n"
+        "• ELO сброситься к 1000, вся матч-стата обнулится\n"
+        "• Это действие необратимо!\n\n"
+        f"Запустить сезон <b>#{current_season + 1}</b>?",
+        c.message.chat.id, c.message.message_id,
+        reply_markup=kb, parse_mode="HTML",
+    )
+    bot.answer_callback_query(c.id)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("creator_new_season_exec_"))
+def cb_creator_new_season_exec(c):
+    uid = c.from_user.id
+    if not is_creator(uid):
+        bot.answer_callback_query(c.id, "❌ Нет доступа")
+        return
+    try:
+        new_season_num = int(c.data.replace("creator_new_season_exec_", ""))
+    except ValueError:
+        bot.answer_callback_query(c.id, "❌ Ошибка")
+        return
+    try:
+        conn = _db()
+        cur  = conn.cursor()
+        cur.execute("SELECT id FROM seasons WHERE is_active=1 ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        if row:
+            season_id = row[0]
+            cur.execute("SELECT user_id, username, elo, wins, losses, kills, deaths, assists, "
+                        "quals_wins, quals_losses, quals_kills, quals_deaths, quals_assists, "
+                        "quals_elo, mvp_count FROM players WHERE is_bot=0")
+            players_snap = cur.fetchall()
+            for ps in players_snap:
+                cur.execute("""
+                    INSERT INTO season_player_history
+                    (season_id, season_number, user_id, username, elo, wins, losses, kills,
+                     deaths, assists, quals_wins, quals_losses, quals_kills, quals_deaths,
+                     quals_assists, quals_elo, mvp_count)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (season_id, new_season_num - 1, *ps))
+            cur.execute("UPDATE seasons SET is_active=0, ended_at=%s, reset_by=%s WHERE id=%s",
+                        (int(time.time()), uid, season_id))
+        cur.execute(
+            "INSERT INTO seasons (season_number, name, is_active) VALUES (%s, %s, 1)",
+            (new_season_num, f"Сезон {new_season_num}"),
+        )
+        _reset_all_stats("players")
+        conn.commit()
+        conn.close()
+        log_admin_action(uid, "new_season", details=f"Сезон #{new_season_num} начат")
+        bot.answer_callback_query(c.id,
+            f"✅ Сезон #{new_season_num} начат! Статистика сохранена.", show_alert=True)
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("🔙 В панель", callback_data="creator_panel"))
+        bot.edit_message_text(
+            f"🏆 <b>Сезон #{new_season_num} успешно начат!</b>\n\n"
+            "Статистика предыдущего сезона сохранена в архиве.\n"
+            "Все игроки начинают с ELO 1000.",
+            c.message.chat.id, c.message.message_id, reply_markup=kb, parse_mode="HTML")
+    except Exception as e:
+        bot.answer_callback_query(c.id, f"❌ Ошибка: {e}", show_alert=True)
+
+
+# ==================== CREATOR FLOW: расширенный обработчик текста ====================
+def _handle_creator_flow_extended(msg, uid, flow, step):
+    """Возвращает True если шаг обработан, иначе False."""
+    inp = msg.text.strip()
+
+    def _find_player_by_inp(inp):
+        if inp.isdigit():
+            return get_player(int(inp))
+        try:
+            conn2 = _db()
+            cur2  = conn2.cursor()
+            cur2.execute("SELECT * FROM players WHERE LOWER(username)=LOWER(%s) AND is_bot=0", (inp,))
+            p = cur2.fetchone()
+            conn2.close()
+            return p
+        except Exception:
+            return None
+
+    if step == "broadcast":
+        creator_flow[uid] = {"step": "broadcast_confirm", "broadcast_text": inp}
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            types.InlineKeyboardButton("✅ Отправить", callback_data=f"creator_broadcast_confirm_ok"),
+            types.InlineKeyboardButton("❌ Отмена",    callback_data="creator_panel"),
+        )
+        bot.send_message(uid,
+            f"📢 <b>Предпросмотр рассылки:</b>\n\n{inp}\n\n"
+            "Отправить это сообщение всем игрокам?",
+            reply_markup=kb, parse_mode="HTML")
+        return True
+
+    if step == "broadcast_confirm":
+        return True
+
+    if step == "give_premium_id":
+        target_p = _find_player_by_inp(inp)
+        if not target_p:
+            bot.send_message(uid, "❌ Игрок не найден. Попробуйте ещё раз.")
+            return True
+        t_uid  = target_p[0]
+        t_name = target_p[1] or str(t_uid)
+        creator_flow[uid] = {"step": "give_premium_days", "target_id": t_uid, "target_name": t_name}
+        bot.send_message(uid,
+            f"🎁 Игрок: <b>{t_name}</b>\n\nНа сколько дней выдать Premium? (введите число):",
+            parse_mode="HTML")
+        return True
+
+    if step == "give_premium_days":
+        if not inp.lstrip("-").isdigit():
+            bot.send_message(uid, "❌ Введите число дней.")
+            return True
+        days = int(inp)
+        if days <= 0:
+            bot.send_message(uid, "❌ Количество дней должно быть больше 0.")
+            return True
+        t_uid  = flow.get("target_id")
+        t_name = flow.get("target_name", str(t_uid))
+        creator_flow.pop(uid, None)
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            types.InlineKeyboardButton("✅ Выдать",  callback_data=f"creator_premium_exec_{t_uid}_{days}"),
+            types.InlineKeyboardButton("❌ Отмена",  callback_data="creator_panel"),
+        )
+        bot.send_message(uid,
+            f"🎁 Выдать <b>{days} дней</b> Premium игроку <b>{t_name}</b>?",
+            reply_markup=kb, parse_mode="HTML")
+        return True
+
+    if step == "verify_player":
+        target_p = _find_player_by_inp(inp)
+        if not target_p:
+            bot.send_message(uid, "❌ Игрок не найден.")
+            return True
+        t_uid    = target_p[0]
+        t_name   = target_p[1] or str(t_uid)
+        is_vf    = bool(target_p[27]) if len(target_p) > 27 else False
+        creator_flow.pop(uid, None)
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        if is_vf:
+            kb.add(
+                types.InlineKeyboardButton("❌ Снять верификацию", callback_data=f"creator_verify_exec_{t_uid}_remove"),
+                types.InlineKeyboardButton("🔙 Отмена",            callback_data="creator_panel"),
+            )
+            status_text = "✅ уже верифицирован"
+        else:
+            kb.add(
+                types.InlineKeyboardButton("✅ Выдать верификацию", callback_data=f"creator_verify_exec_{t_uid}_add"),
+                types.InlineKeyboardButton("🔙 Отмена",             callback_data="creator_panel"),
+            )
+            status_text = "❌ не верифицирован"
+        bot.send_message(uid,
+            f"✅ Игрок: <b>{t_name}</b>\nСтатус: {status_text}",
+            reply_markup=kb, parse_mode="HTML")
+        return True
+
+    if step == "promote_admin":
+        target_p = _find_player_by_inp(inp)
+        if not target_p:
+            bot.send_message(uid, "❌ Игрок не найден.")
+            return True
+        t_uid  = target_p[0]
+        t_name = target_p[1] or str(t_uid)
+        creator_flow.pop(uid, None)
+        try:
+            conn = _db()
+            cur  = conn.cursor()
+            cur.execute("UPDATE players SET is_admin=1 WHERE user_id=%s", (t_uid,))
+            conn.commit()
+            conn.close()
+            if t_uid not in ADMIN_IDS_LIST:
+                ADMIN_IDS_LIST.append(t_uid)
+            log_admin_action(uid, "promote_admin", target_id=t_uid, details=t_name)
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("🔙 В панель", callback_data="creator_panel"))
+            bot.send_message(uid,
+                f"✅ <b>{t_name}</b> назначен администратором!",
+                reply_markup=kb, parse_mode="HTML")
+            try:
+                bot.send_message(t_uid, "🛡️ Вы были назначены <b>администратором</b>!", parse_mode="HTML")
+            except Exception:
+                pass
+        except Exception as e:
+            bot.send_message(uid, f"❌ Ошибка: {e}")
+        return True
+
+    if step == "give_coins_id":
+        target_p = _find_player_by_inp(inp)
+        if not target_p:
+            bot.send_message(uid, "❌ Игрок не найден.")
+            return True
+        t_uid  = target_p[0]
+        t_name = target_p[1] or str(t_uid)
+        creator_flow[uid] = {"step": "give_coins_amount", "target_id": t_uid, "target_name": t_name}
+        bot.send_message(uid,
+            f"💰 Игрок: <b>{t_name}</b>\n\n"
+            "Введите количество монет (положительное — начислить, отрицательное — списать):",
+            parse_mode="HTML")
+        return True
+
+    if step == "give_coins_amount":
+        if not inp.lstrip("-").isdigit():
+            bot.send_message(uid, "❌ Введите число.")
+            return True
+        amount = int(inp)
+        t_uid  = flow.get("target_id")
+        t_name = flow.get("target_name", str(t_uid))
+        creator_flow.pop(uid, None)
+        sign = "+" if amount >= 0 else ""
+        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb.add(
+            types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"creator_coins_exec_{t_uid}_{amount}"),
+            types.InlineKeyboardButton("❌ Отмена",      callback_data="creator_panel"),
+        )
+        bot.send_message(uid,
+            f"💰 Игроку <b>{t_name}</b>: <b>{sign}{amount} SC</b>\nПодтвердить?",
+            reply_markup=kb, parse_mode="HTML")
+        return True
+
+    return False
 
 
 # ==================== ЗАПУСК ====================
