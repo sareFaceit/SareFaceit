@@ -556,11 +556,13 @@ def init_db():
     """)
     conn.commit()
 
-    _add_column_if_missing("matches", "match_code",    "TEXT DEFAULT ''")
-    _add_column_if_missing("matches", "status",        "TEXT DEFAULT 'registered'")
-    _add_column_if_missing("matches", "cancel_reason", "TEXT DEFAULT ''")
-    _add_column_if_missing("matches", "started_at",    "BIGINT DEFAULT 0")
-    _add_column_if_missing("matches", "private_key",   "TEXT DEFAULT 'darling'")
+    _add_column_if_missing("matches", "match_code",      "TEXT DEFAULT ''")
+    _add_column_if_missing("matches", "status",          "TEXT DEFAULT 'registered'")
+    _add_column_if_missing("matches", "cancel_reason",   "TEXT DEFAULT ''")
+    _add_column_if_missing("matches", "started_at",      "BIGINT DEFAULT 0")
+    _add_column_if_missing("matches", "private_key",     "TEXT DEFAULT 'darling'")
+    _add_column_if_missing("matches", "admin_thread_id", "BIGINT DEFAULT NULL")
+    _add_column_if_missing("matches", "admin_msg_id",    "BIGINT DEFAULT NULL")
 
     # Синяя галочка — верификация игрока
     _add_column_if_missing("players", "is_verified", "INTEGER DEFAULT 0")
@@ -742,13 +744,13 @@ def restore_active_matches():
     try:
         cur.execute(
             "SELECT match_id, match_code, league, device, map_name, players_json, started_at, "
-            "COALESCE(private_key, 'darling') "
+            "COALESCE(private_key, 'darling'), admin_thread_id, admin_msg_id "
             "FROM matches WHERE status='active'"
         )
         rows = cur.fetchall()
         restored = 0
         for row in rows:
-            match_id, match_code, league, device, map_name, players_json, started_at, private_key = row
+            match_id, match_code, league, device, map_name, players_json, started_at, private_key, admin_thread_id, admin_msg_id = row
             match_key = f"match_{match_id}"
 
             team_ct, team_t, players = [], [], []
@@ -781,6 +783,8 @@ def restore_active_matches():
                 "match_key":       match_key,
                 "started_at":      started_at or 0,
                 "private":         private_key or "darling",
+                "admin_thread_id": admin_thread_id,
+                "admin_msg_id":    admin_msg_id,
             }
             running_matches[match_key] = lobby
 
@@ -1352,9 +1356,11 @@ def save_match_start(lobby):
         cur.execute(
             """INSERT INTO matches
                (match_id, match_code, league, device, map_name, status, players_json, started_at,
-                winner, score_w, score_l, private_key)
-               VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, '', 0, 0, %s)
-               ON CONFLICT (match_id) DO NOTHING""",
+                winner, score_w, score_l, private_key, admin_thread_id, admin_msg_id)
+               VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, '', 0, 0, %s, %s, %s)
+               ON CONFLICT (match_id) DO UPDATE SET
+                   admin_thread_id = EXCLUDED.admin_thread_id,
+                   admin_msg_id    = EXCLUDED.admin_msg_id""",
             (
                 lobby.get("match_id", 0),
                 lobby.get("match_code", ""),
@@ -1364,6 +1370,8 @@ def save_match_start(lobby):
                 players_json_str,
                 int(time.time()),
                 lobby.get("private", "darling"),
+                lobby.get("admin_thread_id"),
+                lobby.get("admin_msg_id"),
             ),
         )
         # Также пишем в unregistered_matches — удалим оттуда при регистрации/отмене
