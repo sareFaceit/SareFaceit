@@ -1,27 +1,24 @@
 services:
   - type: web
-    name: sare-faceit-bot
+    name: actual-faceit-bot
     env: python
     region: frankfurt
     plan: free
+    runtime: python
     pythonVersion: "3.11.9"
-    buildCommand: python3 -m venv /opt/render/project/venv && /opt/render/project/venv/bin/pip install -r requirements.txt
-    startCommand: /opt/render/project/venv/bin/python bot.py
+    buildCommand: pip install -r requirements.txt && playwright install chromium && playwright install-deps chromium
+    startCommand: python bot.py
     healthCheckPath: /
     envVars:
       - key: BOT_TOKEN
         sync: false
-      - key: SUPABASE_URL
+      - key: DATABASE_URL
         sync: false
       - key: ADMIN_IDS
         sync: false
       - key: ADMIN_CHAT_ID
         sync: false
       - key: LOG_CHAT_ID
-        sync: false
-      - key: REQUIRED_CHANNEL_2_ID
-        sync: false
-      - key: SESSION_SECRET
         sync: false
       - key: LOG_THREAD_ID
         value: "0"
